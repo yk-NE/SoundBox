@@ -52,6 +52,6 @@ class RGBLed(KonashiElementBase._KonashiElementBase):
         duration (int): duration to new color in milliseconds (0~65535)
         """
         b = bytearray([r&0xFF, g&0xFF, b&0xFF, a&0xFF, (duration&0x00FF), ((duration&0xFF00)>>8)])
-        await self.write(KONASHI_UUID_BUILTIN_RGB_SET, b)
+        await self._write(KONASHI_UUID_BUILTIN_RGB_SET, b)
         if callback is not None:
             self._cb = callback
