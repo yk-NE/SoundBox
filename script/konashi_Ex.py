@@ -6,6 +6,8 @@ except ModuleNotFoundError:
     from asyncio import CancelledError
 from konashi import *
 import konashi
+from konashi.Settings import System as KonashiSystem
+from konashi.Settings import Bluetooth as KonashiBluetooth
 from konashi.Io import SoftPWM as KonashiSPWM
 from konashi.Io import HardPWM as KonashiHPWM
 from konashi.Io import Gpio as KonashiGpio
@@ -15,22 +17,37 @@ from konashi.Builtin import AccelGyro as KonashiAccelGyro
 from konashi.Builtin import Temperature as KonashiTemperature
 from konashi.Builtin import Humidity as KonashiHumidity
 from konashi.Builtin import Presence as KonashiPresence
+from konashi.Builtin import RGBLed as KonashiRGB
 import logging
 import asyncio
 import argparse
 
 import math
 
+global END
+END=False
 global Theta
 Theta=[0,0,0]
-global button
-button=False
 global Presence
 Presence=False
 global Scale
 Scale=[220.0, 246.9, 277.2, 293.7, 329.6 ,370.0, 415.3, 440.0]
+global RGB
+RGB=[
+        [255,0,0],
+        [255,128,0],
+        [255,255,0],
+        [255,255,128],
+        [255,255,255],
+        [255,128,255],
+        [255,0,255],
+        [255,0,128],
+    ]
+global alpha
+alpha=255
 
 async def main(device):
+    global END
     try:
         if device is None:
             logging.info("Scan for konashi devices for 5 seconds")
@@ -47,8 +64,12 @@ async def main(device):
             logging.error("Could not connect to konashi device '{}': {}".format(device.name, e))
             return
         logging.info("Connected to device")
+        #await device.settings.system.set_nvm_use(True)
+        #await device.settings.system.set_nvm_save_trigger(KonashiSystem.NvmSaveTrigger.AUTO)
+        #await device.settings.bluetooth.enable_function(KonashiBluetooth.Function.MESH, True)
 
-        global button
+        global alpha
+        global RGB
         global Scale
         global d
         global f
@@ -63,6 +84,26 @@ async def main(device):
             if value<out_min:
                 value=out_min
             return value
+        def i_to_deg(deg):
+            i=0
+            range=22.5
+            if 157.5-range < deg and deg < 157.5+range:
+                i=0
+            if 113.5-range < deg and deg < 113.5+range:
+                i=1
+            if 70.1-range < deg and deg < 70.1+range:
+                i=2
+            if 25.5-range < deg and deg < 25.5+range:
+                i=3
+            if -19.5-range < deg and deg < -19.5+range:
+                i=4
+            if -65.7-range < deg and deg < -65.7+range:
+                i=5
+            if -111.5-range < deg and deg < -111.5+range:
+                i=6
+            if -157.5-range < deg and deg < -157.5+range:
+                i=7
+            return i
         #ジャイロ,加速度
         def accelgyro_cb(accel, gyro):
             global Accel
@@ -70,9 +111,9 @@ async def main(device):
             global Theta
             Accel=accel
             Gyro=gyro
-            Theta[0]=math.atan2(Accel[1],Accel[2])*(180/math.pi)
-            Theta[1]=math.atan2(Accel[0],math.sqrt(Accel[1]**2+Accel[2]**2))*(180/math.pi)
-            logging.info("A {},G {},({}),{}".format(Accel,Gyro,Theta,int(map(Theta[0],-90,90,0,7))))
+            Theta[0]=math.atan2(Accel[0],Accel[1])*(180/math.pi)
+            Theta[1]=math.atan2(Accel[2],math.sqrt(Accel[1]**2+Accel[0]**2))*(180/math.pi)
+            logging.info("A {},G {},({}),{}".format(Accel,Gyro,Theta,i_to_deg(Theta[0])))
         #気温、湿度、気圧
         def temperature_cb(temp):
             global Temp
@@ -103,14 +144,6 @@ async def main(device):
             global Press
             logging.info("T {}[c],H {}[%],P {}[hPa],".format(Temp,Hum,Press))
 
-        #def ainput_cb(pin, level):
-        #    logging.info("Ain Pin {}: {},d= {}".format(pin, level,d))
-        #アナログ入力設定
-        #await device.io.analog.config_adc_period(0.1)
-        #device.io.analog.set_input_cb(ainput_cb)
-        #await device.io.analog.config_pins([
-        #    (0xff, KonashiAin.PinConfig(KonashiAin.PinDirection.INPUT,KonashiAin.AdcRef.REF_VDD,True)),
-        #])
         #ジャイロ,加速度
         global Accel
         global Gyro
@@ -125,23 +158,28 @@ async def main(device):
         #人感センサ設定
         await device.builtin.presence.set_callback(presence_cb)
         # Input callback function set
-        device.io.gpio.set_input_cb(input_cb)
+        #device.io.gpio.set_input_cb(input_cb)
         # GPIO0: enable, input, notify on change, pull-down off, pull-up off, wired function off
         # GPIO1~4: enable, output, pull-down off, pull-up off, wired function off
-        await device.io.gpio.config_pins([
-            (0x01, KonashiGpio.PinConfig(KonashiGpio.PinDirection.INPUT, KonashiGpio.PinPull.NONE, True)),
-        ])
+        #await device.io.gpio.config_pins([
+        #    (0x01, KonashiGpio.PinConfig(KonashiGpio.PinDirection.INPUT, KonashiGpio.PinPull.NONE, True)),
+        #])
         def hpwm_trans_end_cb(pin, duty):
-            global button
             global Presence
+            global Theta
+            global alpha
             if 0 < pin <= 3:
                 logging.info("HardPWM transition end on pin {}: current duty {}%".format(pin, duty))
                 new_pin = 2
-                #if Presence:
-                #    new_duty = 50
-                #else:
-                #    new_duty = 0
-                new_duty = 50
+                if Presence:
+                    new_duty = 50
+                    alpha=255
+                else:
+                    new_duty = 0
+                    alpha=0
+                if -10 > Theta[1] or Theta[1] > 10 or END:
+                    new_duty = 0
+                    alpha=0
                 asyncio.create_task(device.io.hardpwm.control_pins([(0x1<<new_pin, KonashiHPWM.PinControl(device.io.hardpwm.calc_control_value_for_duty(new_duty), 2000))]))
         # Transition end callback functions set
         device.io.hardpwm.set_transition_end_cb(hpwm_trans_end_cb)
@@ -153,17 +191,15 @@ async def main(device):
         await device.io.hardpwm.control_pins([(0x2, KonashiHPWM.PinControl(device.io.hardpwm.calc_control_value_for_duty(100), 2000))])
 
         while True:
+            d=i_to_deg(Theta[0])
             f=Scale[d]
-            d=int(map(Theta[0],-90,90,0,7))
-            #if button:
-            #    f=Scale[d]
-            #    d+=1
-            #    if d>7:
-            #        d=0
+            await device.builtin.rgbled.set(RGB[d][0],RGB[d][1],RGB[d][2],alpha,100)
             await device.io.hardpwm.config_pwm(1/f)#音を鳴らす
             await asyncio.sleep(1)
     except (asyncio.CancelledError, KeyboardInterrupt):
         logging.info("Stop loop")
+        END=True
+        await device.builtin.rgbled.set(RGB[d][0],RGB[d][1],RGB[d][2],0,1)
     finally:
         try:
             if device is not None:
