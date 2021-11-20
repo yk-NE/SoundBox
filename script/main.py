@@ -43,8 +43,6 @@ RGB=[
         [255,0,255],
         [255,0,128],
     ]
-global alpha
-alpha=255
 
 async def main(device):
     global END
@@ -67,14 +65,14 @@ async def main(device):
         #await device.settings.system.set_nvm_use(True)
         #await device.settings.system.set_nvm_save_trigger(KonashiSystem.NvmSaveTrigger.AUTO)
         #await device.settings.bluetooth.enable_function(KonashiBluetooth.Function.MESH, True)
-
-        global alpha
+        global meshdata
         global RGB
         global Scale
         global d
         global f
         f=220.0
         d=0
+        meshdata=[0,0,0,0]
 
         #function
         def map(x,in_min,in_max,out_min,out_max):
@@ -113,88 +111,83 @@ async def main(device):
             Gyro=gyro
             Theta[0]=math.atan2(Accel[0],Accel[1])*(180/math.pi)
             Theta[1]=math.atan2(Accel[2],math.sqrt(Accel[1]**2+Accel[0]**2))*(180/math.pi)
-            logging.info("A {},G {},({}),{}".format(Accel,Gyro,Theta,i_to_deg(Theta[0])))
-        #気温、湿度、気圧
-        def temperature_cb(temp):
-            global Temp
-            Temp=temp
-
-        def humidity_cb(hum):
-            global Hum
-            Hum=hum
-
-        def pressure_cb(press):
-            global Press
-            Press=press
+            #logging.info("A {},G {},({}),{}".format(Accel,Gyro,Theta,i_to_deg(Theta[0])))
 
         def presence_cb(pres):#人感センサー1
             global Presence
             Presence=pres
             print("Presence1:", pres)
         def input_cb(pin, level):
-            global d
-            global button
+            global meshdata
             if level:
-                button=True
+                if pin==5:
+                    meshdata[0]=1
+                elif pin==0:
+                    meshdata[1]=1
+                elif pin==7:
+                    meshdata[2]=1
+                elif pin==6:
+                    meshdata[3]=1
             else:
-                button=False
-            logging.info("Pin {}: {},d= {}".format(pin, level,d))
-            global Temp
-            global Hum
-            global Press
-            logging.info("T {}[c],H {}[%],P {}[hPa],".format(Temp,Hum,Press))
+                if pin==5:
+                    meshdata[0]=0
+                elif pin==0:
+                    meshdata[1]=0
+                elif pin==7:
+                    meshdata[2]=0
+                elif pin==6:
+                    meshdata[3]=0
+            logging.info("Pin {}: {},d= {}".format(pin, level,meshdata))
 
         #ジャイロ,加速度
         global Accel
         global Gyro
         await device.builtin.accelgyro.set_callback(accelgyro_cb)
-        #気温,湿度,気圧
-        global Temp
-        global Hum
-        global Press
-        await device.builtin.temperature.set_callback(temperature_cb)
-        await device.builtin.humidity.set_callback(humidity_cb)
-        await device.builtin.pressure.set_callback(pressure_cb)
         #人感センサ設定
         await device.builtin.presence.set_callback(presence_cb)
         # Input callback function set
-        #device.io.gpio.set_input_cb(input_cb)
+        device.io.gpio.set_input_cb(input_cb)
         # GPIO0: enable, input, notify on change, pull-down off, pull-up off, wired function off
         # GPIO1~4: enable, output, pull-down off, pull-up off, wired function off
-        #await device.io.gpio.config_pins([
-        #    (0x01, KonashiGpio.PinConfig(KonashiGpio.PinDirection.INPUT, KonashiGpio.PinPull.NONE, True)),
-        #])
+        await device.io.gpio.config_pins([
+            (0b11100001, KonashiGpio.PinConfig(KonashiGpio.PinDirection.INPUT, KonashiGpio.PinPull.NONE, True)),
+        ])
         def hpwm_trans_end_cb(pin, duty):
             global Presence
             global Theta
-            global alpha
+            global d
             if 0 < pin <= 3:
-                logging.info("HardPWM transition end on pin {}: current duty {}%".format(pin, duty))
                 new_pin = 2
-                if Presence:
-                    new_duty = 50
-                    alpha=255
-                else:
-                    new_duty = 0
-                    alpha=0
                 if -10 > Theta[1] or Theta[1] > 10 or END:
                     new_duty = 0
                     alpha=0
-                asyncio.create_task(device.io.hardpwm.control_pins([(0x1<<new_pin, KonashiHPWM.PinControl(device.io.hardpwm.calc_control_value_for_duty(new_duty), 2000))]))
+                    for i in range(4):
+                        if meshdata[i]:
+                            d = i
+                            new_duty = 50
+                            alpha=255
+                else:
+                    if Presence:
+                        new_duty = 50
+                        alpha=255
+                    else:
+                        new_duty = 0
+                        alpha=0
+                    d=i_to_deg(Theta[0])
+                f=Scale[d]
+                asyncio.create_task(device.io.hardpwm.config_pwm(1/f))#音階変更
+                asyncio.create_task(device.builtin.rgbled.set(RGB[d][0],RGB[d][1],RGB[d][2],alpha,100))#RGBLED
+                asyncio.create_task(device.io.hardpwm.control_pins([(0x1<<new_pin, KonashiHPWM.PinControl(device.io.hardpwm.calc_control_value_for_duty(new_duty), 1000))]))
         # Transition end callback functions set
         device.io.hardpwm.set_transition_end_cb(hpwm_trans_end_cb)
         # HardPWM clock settings: 10ms period
         await device.io.hardpwm.config_pwm(0.01)
         # HardPWM1~3: enable
-        await device.io.hardpwm.config_pins([(0xe, True)])
+        await device.io.hardpwm.config_pins([(0b00000010, True)])
 
         await device.io.hardpwm.control_pins([(0x2, KonashiHPWM.PinControl(device.io.hardpwm.calc_control_value_for_duty(100), 2000))])
 
         while True:
-            d=i_to_deg(Theta[0])
-            f=Scale[d]
-            await device.builtin.rgbled.set(RGB[d][0],RGB[d][1],RGB[d][2],alpha,100)
-            await device.io.hardpwm.config_pwm(1/f)#音を鳴らす
             await asyncio.sleep(1)
     except (asyncio.CancelledError, KeyboardInterrupt):
         logging.info("Stop loop")
