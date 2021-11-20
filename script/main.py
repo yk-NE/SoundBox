@@ -62,9 +62,7 @@ async def main(device):
             logging.error("Could not connect to konashi device '{}': {}".format(device.name, e))
             return
         logging.info("Connected to device")
-        #await device.settings.system.set_nvm_use(True)
-        #await device.settings.system.set_nvm_save_trigger(KonashiSystem.NvmSaveTrigger.AUTO)
-        #await device.settings.bluetooth.enable_function(KonashiBluetooth.Function.MESH, True)
+
         global meshdata
         global RGB
         global Scale
@@ -82,6 +80,7 @@ async def main(device):
             if value<out_min:
                 value=out_min
             return value
+
         def i_to_deg(deg):
             i=0
             range=22.5
@@ -152,6 +151,7 @@ async def main(device):
         await device.io.gpio.config_pins([
             (0b11100001, KonashiGpio.PinConfig(KonashiGpio.PinDirection.INPUT, KonashiGpio.PinPull.NONE, True)),
         ])
+
         def hpwm_trans_end_cb(pin, duty):
             global Presence
             global Theta
@@ -161,11 +161,21 @@ async def main(device):
                 if -10 > Theta[1] or Theta[1] > 10 or END:
                     new_duty = 0
                     alpha=0
-                    for i in range(4):
-                        if meshdata[i]:
-                            d = i
-                            new_duty = 50
-                            alpha=255
+                    data=0
+                    for i in range(3, -1, -1):
+                        data<<=1
+                        data+=meshdata[i]
+                    if data:
+                        d=data-1
+                        new_duty = 50
+                        alpha=255
+                    #logging.info("data=,{}".format(data))
+                    #logging.info("data=,{0:b}".format(data))
+                    #for i in range(4):
+                    #    if meshdata[i]:
+                    #        d = i
+                    #        new_duty = 50
+                    #        alpha=255
                 else:
                     if Presence:
                         new_duty = 50
@@ -174,6 +184,8 @@ async def main(device):
                         new_duty = 0
                         alpha=0
                     d=i_to_deg(Theta[0])
+                if d>=8:
+                    d=7
                 f=Scale[d]
                 asyncio.create_task(device.io.hardpwm.config_pwm(1/f))#音階変更
                 asyncio.create_task(device.builtin.rgbled.set(RGB[d][0],RGB[d][1],RGB[d][2],alpha,100))#RGBLED
